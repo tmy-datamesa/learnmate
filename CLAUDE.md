@@ -2,8 +2,7 @@
 
 ## What This Project Does
 
-Personal AI tutor that embeds my Obsidian wiki and raw learning sources into ChromaDB, then teaches me back through conversational RAG. Two modes: "teach" (explain topics, answer questions with sources) and "test" (quiz me, evaluate my answers, show gaps). Inspired by Karibu's document → knowledge → conversational learning architecture.
-
+Personal AI tutor that embeds my Obsidian wiki and raw learning sources into ChromaDB, then teaches me back through conversational RAG. Two modes: "teach" (explain topics, answer questions with sources) and "test" (quiz me, evaluate my answers, show gaps).
 ## Tech Stack
 
 - **Language**: Python 3.12+
@@ -85,3 +84,4 @@ learnmate/
 ## Current Status
 
 - 2026-04-08: Repo created. Project structure set up. Ready for embedding pipeline.
+- 2026-04-08: Wiki embedding pipeline built (parser + embedder + pipeline runner). 33 wiki docs parsed successfully. Awaiting OpenAI API key to run first embedding.
