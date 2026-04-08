@@ -17,13 +17,26 @@ the user's wiki notes below.
 Generate exactly one quiz question based on the provided context. Rules:
 - Write the question in Turkish. Use technical terms in English as-is.
 - Focus on CONCEPTS, not people. Never ask "what does person X think" or \
-"compare person X and Y's views". The user wants to understand ideas, \
-not memorize who said what.
-- Ask questions about: why something exists, what problem it solves, \
-how it works, when to use it vs alternatives, what happens if you don't do it.
-- Good examples: "RAG'da chunking neden gereklidir? Yapılmazsa ne olur?" \
-or "Context engineering ile prompt engineering arasındaki fark nedir?"
-- Bad examples: "Karpathy X hakkında ne düşünüyor?" or "Kim Y'yi önerdi?"
+"compare person X and Y's views".
+- NEVER ask flat definition or listing questions like "X nedir?" or \
+"X'in bileşenlerini sayın". These test memorization, not understanding.
+- ALWAYS wrap the question in a realistic scenario. The user should feel \
+like they're solving a real problem, not taking a textbook exam.
+- Try to combine 2+ concepts from the context into one question.
+- Good question examples:
+  "Bir e-ticaret sitesi için chatbot yapıyorsun. Ürün kataloğu 100.000 \
+  item. Kullanıcı 'kırmızı beden M elbise var mı?' diye soruyor. Bu \
+  sistemi RAG ile mi kurarsın, long context ile mi? Neden?"
+  "Bir Claude Code session'ında 40 mesaj yazdın ve Claude artık önceki \
+  talimatlarını unutuyor. Bu durumun teknik adı ne, kök sebebi nedir \
+  ve nasıl çözersin?"
+  "LearnMate gibi bir RAG chatbot'unda retrieval sonuçları kötüyse, \
+  sorun chunking'de mi, embedding'de mi, yoksa query'de mi? Nasıl \
+  ayırt edersin?"
+- Bad question examples:
+  "RAG'ın bileşenlerini sayınız." (listing)
+  "Context engineering nedir?" (flat definition)
+  "Karpathy ne düşünüyor?" (person-focused)
 - Do not include the answer in your response.
 - Output ONLY the question, nothing else."""
 
@@ -33,16 +46,29 @@ answer against the source material below.
 
 Evaluate the answer and respond in this exact format:
 Score: [dogru/kismi/yanlis]
-Degerlendirme: [2-3 sentence evaluation in Turkish — what was correct, \
-what was wrong or missing]
+Degerlendirme: [evaluation in Turkish — structure below]
 Dogru cevap: [The complete correct answer based on wiki sources, in Turkish]
+
+EVALUATION STRUCTURE — follow this order:
+1. First, acknowledge what the user got RIGHT. Be specific about which \
+concepts or reasoning were correct.
+2. Then, note what was MISSING or could be improved.
+3. If the user used different words but captured the right idea, that \
+counts as correct. Do NOT penalize paraphrasing.
 
 Rules:
 - Answer in Turkish. Use technical terms in English as-is.
-- "dogru" = answer covers the key points from the source
-- "kismi" = answer has some correct parts but misses important points
-- "yanlis" = answer is incorrect or completely off-topic
-- Be encouraging but honest. This is for learning, not grading."""
+- "dogru" = the user understands the core concept, even if they used \
+different terminology or phrasing than the source. They don't need to \
+hit every detail — grasping the key insight is enough.
+- "kismi" = some correct reasoning but missing an important dimension \
+or trade-off that changes the answer meaningfully.
+- "yanlis" = fundamentally wrong reasoning, not just missing details.
+- If the user gives a creative or unexpected approach that is still \
+technically valid, acknowledge it positively even if it differs from \
+the source material.
+- Be encouraging. This is a learning tool, not an exam. The goal is \
+to help the user build understanding, not to catch them being wrong."""
 
 
 class TestSession:
