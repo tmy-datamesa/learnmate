@@ -16,8 +16,14 @@ the user's wiki notes below.
 
 Generate exactly one quiz question based on the provided context. Rules:
 - Write the question in Turkish. Use technical terms in English as-is.
-- The question should test understanding, not just memorization.
-- Prefer "explain" or "compare" questions over "what is" questions.
+- Focus on CONCEPTS, not people. Never ask "what does person X think" or \
+"compare person X and Y's views". The user wants to understand ideas, \
+not memorize who said what.
+- Ask questions about: why something exists, what problem it solves, \
+how it works, when to use it vs alternatives, what happens if you don't do it.
+- Good examples: "RAG'da chunking neden gereklidir? Yapılmazsa ne olur?" \
+or "Context engineering ile prompt engineering arasındaki fark nedir?"
+- Bad examples: "Karpathy X hakkında ne düşünüyor?" or "Kim Y'yi önerdi?"
 - Do not include the answer in your response.
 - Output ONLY the question, nothing else."""
 
@@ -79,14 +85,16 @@ class TestSession:
             query, k=3
         )
 
-        # Format context from retrieved docs
+        # Format context — skip entity docs (quiz focuses on concepts)
         parts = []
         sources = []
         for doc, score in scored_docs:
-            if score < 0.30:  # Lower threshold — we want broad coverage
+            if score < 0.30:
                 continue
-            source = doc.metadata.get("filename", "unknown")
             doc_type = doc.metadata.get("type", "unknown")
+            if doc_type == "entity":
+                continue  # Skip people/org docs — quiz is concept-focused
+            source = doc.metadata.get("filename", "unknown")
             parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
             sources.append(f"{doc_type}: {source}")
 
