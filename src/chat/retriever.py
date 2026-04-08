@@ -72,14 +72,17 @@ def get_vectorstore() -> Chroma:
 def _format_docs(scored_docs: list[tuple]) -> tuple[str, list[str]]:
     """Format retrieved documents into context string and source list.
 
-    Only includes documents that pass the relevance threshold.
+    All document types (concepts, entities, sources) are included in the
+    context for answer generation. However, only documents from the
+    "sources" subfolder appear in the returned sources list — concepts
+    and entities are used as context but not cited.
 
     Args:
         scored_docs: List of (Document, score) tuples from similarity search.
 
     Returns:
         Tuple of (formatted context string, list of source names).
-        Both are empty if no documents pass the threshold.
+        Context may include all doc types; sources list only has subfolder=sources.
     """
     parts = []
     sources = []
@@ -88,8 +91,10 @@ def _format_docs(scored_docs: list[tuple]) -> tuple[str, list[str]]:
             continue
         source = doc.metadata.get("filename", "unknown")
         doc_type = doc.metadata.get("type", "unknown")
+        subfolder = doc.metadata.get("subfolder", "")
         parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
-        sources.append(f"{doc_type}: {source}")
+        if subfolder == "sources":
+            sources.append(source)
     return "\n\n---\n\n".join(parts), sources
 
 
