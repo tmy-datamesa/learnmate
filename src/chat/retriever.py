@@ -1,13 +1,12 @@
-"""Retrieval chain — query ChromaDB and generate answers with GPT-4o.
+"""Retrieval chain with conversation memory for teach mode.
 
 Connects LangChain's ChatOpenAI to the existing ChromaDB collection.
-Retrieves relevant wiki documents and generates sourced answers.
+Maintains conversation history within a session so follow-up questions
+understand prior context.
 """
 
 from langchain_chroma import Chroma
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from src.utils.config import (
@@ -18,7 +17,6 @@ from src.utils.config import (
     OPENAI_API_KEY,
 )
 
-# System prompt for the teach mode — answer questions using wiki sources
 SYSTEM_PROMPT = """\
 You are LearnMate, a personal AI tutor. You teach the user about AI/ML \
 concepts using their own Obsidian wiki as the knowledge source.
@@ -27,13 +25,11 @@ Rules:
 - Answer in Turkish. Use technical terms in English as-is.
 - Base your answer ONLY on the provided context. If the context doesn't \
 contain enough information, say so honestly.
-- Cite which source documents you used (by filename).
+- Cite which source documents you used (by filename) at the end of your answer.
 - Explain clearly, as if teaching someone who is learning AI/ML.
 - Keep answers concise but complete.
-
-Context from wiki:
-{context}
-"""
+- When the user asks a follow-up question, use the conversation history \
+to understand what they're referring to."""
 
 
 def get_vectorstore() -> Chroma:
@@ -50,72 +46,87 @@ def get_vectorstore() -> Chroma:
         openai_api_key=OPENAI_API_KEY,
     )
 
-    vectorstore = Chroma(
+    return Chroma(
         collection_name=CHROMA_COLLECTION_NAME,
         persist_directory=str(CHROMA_PERSIST_DIR),
         embedding_function=embeddings,
     )
 
-    return vectorstore
 
+def _format_docs(docs: list) -> tuple[str, list[str]]:
+    """Format retrieved documents into context string and source list.
 
-def build_chain():
-    """Build a retrieval-augmented generation (RAG) chain.
-
-    Flow:
-        1. User question comes in
-        2. ChromaDB retriever finds top 4 relevant documents
-        3. Documents are formatted as context
-        4. GPT-4o generates an answer based on context + question
+    Args:
+        docs: List of LangChain Document objects from retriever.
 
     Returns:
-        A LangChain runnable chain (invoke with {"question": "..."}).
+        Tuple of (formatted context string, list of source names).
     """
-    vectorstore = get_vectorstore()
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+    parts = []
+    sources = []
+    for doc in docs:
+        source = doc.metadata.get("filename", "unknown")
+        doc_type = doc.metadata.get("type", "unknown")
+        parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
+        sources.append(f"{doc_type}: {source}")
+    return "\n\n---\n\n".join(parts), sources
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", SYSTEM_PROMPT),
-            ("human", "{question}"),
-        ]
-    )
 
-    llm = ChatOpenAI(
-        model=CHAT_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        temperature=0.3,
-    )
+class TeachSession:
+    """A single teach-mode conversation session with memory.
 
-    def format_docs(docs):
-        """Format retrieved documents into a single context string.
+    Maintains chat history so follow-up questions work naturally.
+    Each question triggers a fresh retrieval from ChromaDB, but the
+    LLM sees the full conversation history for context.
+    """
+
+    def __init__(self) -> None:
+        """Initialize a new teach session."""
+        self._vectorstore = get_vectorstore()
+        self._retriever = self._vectorstore.as_retriever(search_kwargs={"k": 4})
+        self._llm = ChatOpenAI(
+            model=CHAT_MODEL,
+            openai_api_key=OPENAI_API_KEY,
+            temperature=0.3,
+        )
+        self._history: list[HumanMessage | AIMessage] = []
+
+    def ask(self, question: str) -> tuple[str, list[str]]:
+        """Ask a question with full conversation context.
 
         Args:
-            docs: List of LangChain Document objects.
+            question: User's question in any language.
 
         Returns:
-            Formatted string with document content and source info.
+            Tuple of (answer string, list of source document names).
         """
-        parts = []
-        for doc in docs:
-            source = doc.metadata.get("filename", "unknown")
-            doc_type = doc.metadata.get("type", "unknown")
-            parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
-        return "\n\n---\n\n".join(parts)
+        # Retrieve relevant docs for this specific question
+        docs = self._retriever.invoke(question)
+        context, sources = _format_docs(docs)
 
-    # RAG chain: retrieve → format → prompt → LLM → parse output
-    chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
+        # Build messages: system + history + new context + question
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages.extend(self._history)
+        messages.append(
+            HumanMessage(
+                content=f"Context from wiki:\n{context}\n\nQuestion: {question}"
+            )
+        )
 
-    return chain
+        # Generate answer
+        response = self._llm.invoke(messages)
+        answer = response.content
+
+        # Save to history (without context to keep history clean)
+        self._history.append(HumanMessage(content=question))
+        self._history.append(AIMessage(content=answer))
+
+        return answer, sources
 
 
+# Convenience function for single questions (no memory)
 def ask(question: str) -> str:
-    """Ask a question and get a wiki-sourced answer.
+    """Ask a single question without conversation memory.
 
     Args:
         question: User's question in any language.
@@ -123,5 +134,6 @@ def ask(question: str) -> str:
     Returns:
         Generated answer string with source citations.
     """
-    chain = build_chain()
-    return chain.invoke(question)
+    session = TeachSession()
+    answer, _ = session.ask(question)
+    return answer
