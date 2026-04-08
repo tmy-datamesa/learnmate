@@ -28,7 +28,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         return metadata, text
 
     frontmatter_block = text[3:end_index].strip()
-    body = text[end_index + 3:].strip()
+    body = text[end_index + 3 :].strip()
 
     # Parse simple key: value pairs
     for line in frontmatter_block.splitlines():

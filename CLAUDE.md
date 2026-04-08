@@ -50,8 +50,9 @@ learnmate/
 
 ### Git & PR
 
-- Three permanent branches: `develop` (active work), `main` (stable), `prod` (live).
-- All feature/fix work branches from `develop` and merges back to `develop` via PR.
+- Three permanent branches: `develop` (active work), `main` (stable, updated only with explicit approval), `prod` (empty until first production deploy).
+- `develop` is the default working branch. All feature/fix branches come from `develop` and merge back via PR.
+- `prod` is an orphan branch — starts empty, only receives from `main` when deploying to production.
 - Never push directly to `develop`, `main`, or `prod`.
 - Every task starts with a GitHub issue. No branch without an issue.
 - Use `feature/#X-short-description` or `fix/#X-short-description` for branch names.
