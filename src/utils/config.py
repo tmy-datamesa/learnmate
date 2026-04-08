@@ -11,6 +11,7 @@ load_dotenv()
 # OpenAI
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 EMBEDDING_MODEL: str = "text-embedding-3-small"
+CHAT_MODEL: str = "gpt-4o"
 
 # ChromaDB
 CHROMA_PERSIST_DIR: Path = Path(os.getenv("CHROMA_PERSIST_DIR", "./data/chromadb"))
