@@ -17,14 +17,18 @@ from src.utils.config import (
     OPENAI_API_KEY,
 )
 
+# Minimum relevance score to include a document in context.
+# Based on testing: relevant queries score 0.40+, irrelevant 0.25-0.30.
+RELEVANCE_THRESHOLD = 0.35
+
 SYSTEM_PROMPT = """\
 You are LearnMate, a personal AI tutor. You teach the user about AI/ML \
 concepts using their own Obsidian wiki as the knowledge source.
 
 Rules:
 - Answer in Turkish. Use technical terms in English as-is.
-- Base your answer ONLY on the provided context. If the context doesn't \
-contain enough information, say so honestly.
+- Base your answer ONLY on the provided context. If no context is provided, \
+tell the user you don't have relevant information in the wiki for this question.
 - Cite which source documents you used (by filename) at the end of your answer.
 - Explain clearly, as if teaching someone who is learning AI/ML.
 - Keep answers concise but complete.
@@ -53,18 +57,23 @@ def get_vectorstore() -> Chroma:
     )
 
 
-def _format_docs(docs: list) -> tuple[str, list[str]]:
+def _format_docs(scored_docs: list[tuple]) -> tuple[str, list[str]]:
     """Format retrieved documents into context string and source list.
 
+    Only includes documents that pass the relevance threshold.
+
     Args:
-        docs: List of LangChain Document objects from retriever.
+        scored_docs: List of (Document, score) tuples from similarity search.
 
     Returns:
         Tuple of (formatted context string, list of source names).
+        Both are empty if no documents pass the threshold.
     """
     parts = []
     sources = []
-    for doc in docs:
+    for doc, score in scored_docs:
+        if score < RELEVANCE_THRESHOLD:
+            continue
         source = doc.metadata.get("filename", "unknown")
         doc_type = doc.metadata.get("type", "unknown")
         parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
@@ -83,7 +92,6 @@ class TeachSession:
     def __init__(self) -> None:
         """Initialize a new teach session."""
         self._vectorstore = get_vectorstore()
-        self._retriever = self._vectorstore.as_retriever(search_kwargs={"k": 4})
         self._llm = ChatOpenAI(
             model=CHAT_MODEL,
             openai_api_key=OPENAI_API_KEY,
@@ -100,18 +108,22 @@ class TeachSession:
         Returns:
             Tuple of (answer string, list of source document names).
         """
-        # Retrieve relevant docs for this specific question
-        docs = self._retriever.invoke(question)
-        context, sources = _format_docs(docs)
+        # Retrieve docs with relevance scores, filter by threshold
+        scored_docs = self._vectorstore.similarity_search_with_relevance_scores(
+            question, k=4
+        )
+        context, sources = _format_docs(scored_docs)
 
-        # Build messages: system + history + new context + question
+        # Build messages: system + history + context (if any) + question
         messages = [SystemMessage(content=SYSTEM_PROMPT)]
         messages.extend(self._history)
-        messages.append(
-            HumanMessage(
-                content=f"Context from wiki:\n{context}\n\nQuestion: {question}"
-            )
-        )
+
+        if context:
+            user_msg = f"Context from wiki:\n{context}\n\nQuestion: {question}"
+        else:
+            user_msg = f"No relevant wiki context found.\n\nQuestion: {question}"
+
+        messages.append(HumanMessage(content=user_msg))
 
         # Generate answer
         response = self._llm.invoke(messages)
