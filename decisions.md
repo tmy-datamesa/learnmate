@@ -21,12 +21,12 @@ Claude updates this file automatically after each decision.
 **Alternatives**: Raw OpenAI API + manual embedding management (simpler but no learning value), LlamaIndex (less familiar), Pinecone (cloud dependency, overkill for personal use).
 **Impact**: Adds LangChain as core dependency. Project doubles as a LangChain learning exercise.
 
-### 2026-04-08 | Three-branch git strategy (develop / main / prod)
+### 2026-04-08 | Two-branch git strategy (develop / main)
 
-**Decision**: Use develop for active work, main for stable, prod for production-ready.
-**Why**: Practice real git workflow discipline. Matches the project templates we built.
-**Alternatives**: Single main branch (simpler but no release discipline).
-**Impact**: All feature branches come from develop. PRs required for every merge.
+**Decision**: Use develop for active work, main for stable releases. No prod branch until deployment is needed.
+**Why**: prod adds no value before the project goes live. Keep it simple — add prod as an empty orphan branch when the time comes.
+**Alternatives**: Three branches from the start (premature), single main branch (no release discipline).
+**Impact**: Merge flow is `feature/*` → `develop` (PR) → `main` (explicit approval only). Never skip develop.
 
 ### 2026-04-08 | Wiki = 1 chunk per file, no splitting
 
