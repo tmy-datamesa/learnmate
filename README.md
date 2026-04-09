@@ -3,6 +3,7 @@
 Personal AI tutor that teaches you from your own notes.
 
 LearnMate embeds your Obsidian wiki into Chroma Cloud, then gives you two ways to learn from it: ask questions (teach mode) and get quizzed (test mode). It uses your own knowledge base as the source of truth — not the internet, not a generic model.
+![learnmate4](https://github.com/user-attachments/assets/c5332d5d-581e-4594-99c8-bc99868e0139)
 
 ---
 
