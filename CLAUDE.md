@@ -6,11 +6,12 @@ Personal AI tutor that embeds my Obsidian wiki and raw learning sources into Chr
 ## Tech Stack
 
 - **Language**: Python 3.12+
-- **LLM Provider**: OpenAI API (GPT-4o for generation, text-embedding-3-small for embeddings)
-- **Framework**: LangChain + LangGraph
-- **Vector Store**: ChromaDB (local, persistent)
-- **Database**: None for MVP — ChromaDB + local markdown files
-- **Deployment**: Local CLI for MVP
+- **LLM Provider**: OpenAI API (GPT-4o for generation)
+- **Embeddings**: Chroma Cloud Qwen3 (dense) + Splade (sparse) — no OpenAI embedding cost
+- **Framework**: LangChain (chat/retrieval only)
+- **Vector Store**: Chroma Cloud (hybrid search: RRF dense + sparse)
+- **Web UI**: FastAPI + single-page HTML (SSE streaming, Tailwind CDN)
+- **Deployment**: Local (CLI + web UI)
 - **Other**: Obsidian markdown files as knowledge source
 
 ## Project Structure
@@ -18,11 +19,10 @@ Personal AI tutor that embeds my Obsidian wiki and raw learning sources into Chr
 ```
 learnmate/
 ├── src/
-│   ├── ingest/          # Markdown parsing, chunking, embedding pipeline
-│   ├── chat/            # Conversation chains, teach & test modes
-│   └── utils/           # Shared helpers
-├── data/                # ChromaDB persistent storage (gitignored)
-├── tests/
+│   ├── ingest/          # Markdown parsing, embedding pipeline, migration
+│   ├── chat/            # Teach/test sessions, hybrid search, CLI
+│   ├── api/             # FastAPI app + static HTML
+│   └── utils/           # Config, env vars
 ├── .env.example
 ├── .gitignore
 ├── CLAUDE.md
@@ -80,13 +80,13 @@ learnmate/
 
 - OpenAI API rate limits and cost — keep token usage efficient.
 - No GPU — all inference via API, all embeddings via API.
-- Knowledge source is ~49 wiki pages + ~17 raw source files (small corpus).
+- OpenAI API cost — only generation (GPT-4o), embeddings via Chroma credits
+- No GPU — all inference via API
+- Knowledge source is ~56 wiki pages (small corpus)
 
 ## Current Status
 
-- 2026-04-08: Repo created. Project structure set up.
-- 2026-04-08: Wiki embedding pipeline (parser + embedder + incremental sync). 33 → 49 docs.
-- 2026-04-08: Teach mode (conversation memory, relevance filtering, follow-up questions).
-- 2026-04-08: Test mode (scenario-based quiz, fair evaluation, session summary).
-- 2026-04-08: Prompt rewrite based on user testing. Sources list filters by subfolder.
-- 2026-04-08: MVP build plan complete. All issues closed.
+- 2026-04-08: MVP complete — teach mode, test mode, CLI, incremental sync.
+- 2026-04-09: Chroma Cloud migration (hybrid search, Qwen+Splade, no OpenAI embeddings).
+- 2026-04-09: Web UI (FastAPI + HTML, SSE streaming, markdown render).
+- 2026-04-09: Bug fixes — history trim, empty input, duplicate summary, RRF threshold.
