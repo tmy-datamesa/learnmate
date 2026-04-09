@@ -183,6 +183,50 @@ class TeachSession:
 
         return answer, sources
 
+    def ask_stream(self, question: str) -> tuple[list[str], object]:
+        """Ask a question and return sources + a token stream generator.
+
+        Retrieves context and builds messages like ask(), but streams
+        the LLM response token by token. History is updated after the
+        full response is consumed.
+
+        Args:
+            question: User's question in any language.
+
+        Returns:
+            Tuple of (sources list, generator yielding response chunks).
+        """
+        docs = hybrid_search(self._collection, question)
+        context, sources = _format_docs(docs)
+
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages.extend(self._history)
+
+        if context:
+            user_msg = f"Context from wiki:\n{context}\n\nQuestion: {question}"
+        else:
+            user_msg = f"No relevant wiki context found.\n\nQuestion: {question}"
+
+        messages.append(HumanMessage(content=user_msg))
+
+        def _stream() -> object:
+            """Yield chunks and update history when done."""
+            full_answer = []
+            for chunk in self._llm.stream(messages):
+                token = chunk.content
+                full_answer.append(token)
+                yield token
+
+            answer = "".join(full_answer)
+            self._history.append(HumanMessage(content=question))
+            self._history.append(AIMessage(content=answer))
+
+            max_messages = MAX_HISTORY_TURNS * 2
+            if len(self._history) > max_messages:
+                self._history = self._history[-max_messages:]
+
+        return sources, _stream()
+
 
 # Convenience function for single questions (no memory)
 def ask(question: str) -> str:
