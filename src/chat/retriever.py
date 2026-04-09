@@ -11,10 +11,15 @@ from langchain_openai import ChatOpenAI
 from src.ingest.embedder import get_collection
 from src.utils.config import CHAT_MODEL, OPENAI_API_KEY
 
-# Minimum RRF score to include a document in context.
-# RRF scores are negative (lower = better match).
-# -0.02 filters out clearly irrelevant results.
-RELEVANCE_THRESHOLD = -0.02
+# Maximum RRF score to include a document in context.
+# RRF scores are negative — more negative = better match (higher rank).
+# A score near 0 means the document barely ranked. -0.010 filters those out.
+RELEVANCE_THRESHOLD = -0.010
+
+# Maximum number of Q&A turns to keep in session history.
+# Each turn = 2 messages (HumanMessage + AIMessage).
+# Prevents unbounded context growth across long sessions.
+MAX_HISTORY_TURNS = 20
 
 SYSTEM_PROMPT = """\
 You are LearnMate, a personal AI tutor. You teach the user about AI/ML \
@@ -27,7 +32,6 @@ Rules:
 - Answer in Turkish. Use technical terms in English as-is.
 - Base your answer ONLY on the provided context. If no context is provided, \
 tell the user you don't have relevant information in the wiki for this question.
-- Cite which source documents you used (by filename) at the end of your answer.
 - Explain with analogies and real-world examples. Connect concepts to \
 practical scenarios the user might encounter while building AI products.
 - When multiple topics come up in a session, ACTIVELY connect them. \
@@ -171,7 +175,56 @@ class TeachSession:
         self._history.append(HumanMessage(content=question))
         self._history.append(AIMessage(content=answer))
 
+        # Trim oldest turns if history exceeds the limit
+        max_messages = MAX_HISTORY_TURNS * 2
+        if len(self._history) > max_messages:
+            self._history = self._history[-max_messages:]
+
         return answer, sources
+
+    def ask_stream(self, question: str) -> tuple[list[str], object]:
+        """Ask a question and return sources + a token stream generator.
+
+        Retrieves context and builds messages like ask(), but streams
+        the LLM response token by token. History is updated after the
+        full response is consumed.
+
+        Args:
+            question: User's question in any language.
+
+        Returns:
+            Tuple of (sources list, generator yielding response chunks).
+        """
+        docs = hybrid_search(self._collection, question)
+        context, sources = _format_docs(docs)
+
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages.extend(self._history)
+
+        if context:
+            user_msg = f"Context from wiki:\n{context}\n\nQuestion: {question}"
+        else:
+            user_msg = f"No relevant wiki context found.\n\nQuestion: {question}"
+
+        messages.append(HumanMessage(content=user_msg))
+
+        def _stream() -> object:
+            """Yield chunks and update history when done."""
+            full_answer = []
+            for chunk in self._llm.stream(messages):
+                token = chunk.content
+                full_answer.append(token)
+                yield token
+
+            answer = "".join(full_answer)
+            self._history.append(HumanMessage(content=question))
+            self._history.append(AIMessage(content=answer))
+
+            max_messages = MAX_HISTORY_TURNS * 2
+            if len(self._history) > max_messages:
+                self._history = self._history[-max_messages:]
+
+        return sources, _stream()
 
 
 # Convenience function for single questions (no memory)

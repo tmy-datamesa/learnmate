@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LearnMate</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    html { scroll-behavior: smooth; }
+    #chat-messages { scroll-behavior: smooth; }
+
+    /* Markdown rendering inside assistant bubbles */
+    .md h1, .md h2, .md h3 { font-weight: 600; margin-top: 1.1em; margin-bottom: 0.4em; line-height: 1.3; }
+    .md h1 { font-size: 1.1em; color: #e2e8f0; }
+    .md h2 { font-size: 1em; color: #cbd5e1; }
+    .md h3 { font-size: 0.95em; color: #94a3b8; }
+    .md h1:first-child, .md h2:first-child, .md h3:first-child { margin-top: 0; }
+    .md p { margin-bottom: 0.75em; line-height: 1.7; }
+    .md p:last-child { margin-bottom: 0; }
+    .md ul { list-style: disc; padding-left: 1.4em; margin-bottom: 0.75em; }
+    .md ol { list-style: decimal; padding-left: 1.4em; margin-bottom: 0.75em; }
+    .md li { margin-bottom: 0.3em; line-height: 1.6; }
+    .md li:last-child { margin-bottom: 0; }
+    .md strong { font-weight: 600; color: #e2e8f0; }
+    .md em { font-style: italic; color: #94a3b8; }
+    .md code { background: #1e293b; border: 1px solid #334155; border-radius: 4px; padding: 0.1em 0.4em; font-size: 0.85em; font-family: 'JetBrains Mono', monospace; color: #a5f3fc; }
+    .md pre { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 1em; margin: 0.75em 0; overflow-x: auto; }
+    .md pre code { background: none; border: none; padding: 0; color: #e2e8f0; font-size: 0.85em; }
+    .md blockquote { border-left: 3px solid #4f46e5; padding-left: 0.9em; color: #94a3b8; margin: 0.75em 0; }
+    .md hr { border: none; border-top: 1px solid #1e293b; margin: 1em 0; }
+
+    /* streaming cursor */
+    .typing-cursor::after { content: '▋'; animation: blink 1s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .fade-in { animation: fadeIn 0.2s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+  </style>
+</head>
+<body class="dark bg-gray-950 text-gray-100 h-screen flex flex-col overflow-hidden antialiased">
+
+  <!-- Header -->
+  <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between shrink-0 sticky top-0 z-10 bg-gray-950">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center text-white font-bold text-sm">L</div>
+      <span class="font-semibold text-gray-100">LearnMate</span>
+    </div>
+    <div class="flex gap-1 bg-gray-900 rounded-lg p-1">
+      <button id="tab-teach" onclick="switchMode('teach')"
+        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all bg-indigo-500 text-white">
+        Teach
+      </button>
+      <button id="tab-test" onclick="switchMode('test')"
+        class="px-4 py-1.5 rounded-md text-sm font-medium transition-all text-gray-400 hover:text-gray-200">
+        Test
+      </button>
+    </div>
+    <button onclick="resetSession()" title="Yeni oturum"
+      class="text-gray-500 hover:text-gray-300 transition-colors text-sm flex items-center gap-1.5">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+      Sıfırla
+    </button>
+  </header>
+
+  <!-- TEACH MODE -->
+  <div id="teach-panel" class="flex flex-col flex-1 min-h-0">
+    <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+      <div class="flex justify-center">
+        <p class="text-gray-500 text-sm">Wiki'nden öğren. Bir şey sor.</p>
+      </div>
+    </div>
+
+    <div id="sources-bar" class="hidden px-6 py-2 border-t border-gray-800 bg-gray-900/50">
+      <p class="text-xs text-gray-500">
+        <span class="text-gray-400 font-medium">Kaynaklar:</span>
+        <span id="sources-text"></span>
+      </p>
+    </div>
+
+    <div class="border-t border-gray-800 px-4 py-4 shrink-0">
+      <form id="teach-form" onsubmit="sendQuestion(event)" class="flex gap-3 max-w-3xl mx-auto">
+        <input id="teach-input" type="text" placeholder="Soru sor..."
+          class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm
+                 text-gray-100 placeholder-gray-500 outline-none
+                 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+        <button type="submit" id="send-btn"
+          class="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-40 disabled:cursor-not-allowed
+                 px-5 py-3 rounded-xl text-sm font-medium transition-all">
+          Gönder
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- TEST MODE -->
+  <div id="test-panel" class="hidden flex-1 min-h-0 overflow-y-auto px-4 py-8">
+    <div class="max-w-2xl mx-auto space-y-6">
+
+      <div id="test-start" class="space-y-4">
+        <p class="text-gray-400 text-sm text-center">Konu gir veya boş bırak (rastgele).</p>
+        <div class="flex gap-3">
+          <input id="topic-input" type="text" placeholder="Konu (opsiyonel)..."
+            class="flex-1 bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm
+                   text-gray-100 placeholder-gray-500 outline-none
+                   focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all" />
+          <button onclick="startTest()"
+            class="bg-indigo-500 hover:bg-indigo-400 px-5 py-3 rounded-xl text-sm font-medium transition-all">
+            Başla
+          </button>
+        </div>
+      </div>
+
+      <div id="question-card" class="hidden fade-in space-y-5">
+        <div class="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-full">Soru</span>
+            <span id="q-sources" class="text-xs text-gray-500"></span>
+          </div>
+          <div id="question-text" class="md text-gray-100 text-sm leading-relaxed"></div>
+        </div>
+
+        <div id="answer-section" class="space-y-3">
+          <textarea id="answer-input" rows="4" placeholder="Cevabını yaz..."
+            class="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm
+                   text-gray-100 placeholder-gray-500 outline-none resize-none
+                   focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"></textarea>
+          <div class="flex gap-2">
+            <button onclick="submitAnswer()"
+              class="bg-indigo-500 hover:bg-indigo-400 px-5 py-2.5 rounded-xl text-sm font-medium transition-all">
+              Değerlendir
+            </button>
+            <button onclick="skipQuestion()"
+              class="bg-gray-800 hover:bg-gray-700 px-5 py-2.5 rounded-xl text-sm font-medium transition-all text-gray-300">
+              Atla
+            </button>
+          </div>
+        </div>
+
+        <div id="eval-card" class="hidden fade-in bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-4">
+          <div class="flex items-center gap-2">
+            <span id="score-badge" class="text-xs font-medium px-2.5 py-0.5 rounded-full"></span>
+          </div>
+          <div id="eval-text" class="md text-gray-300 text-sm leading-relaxed"></div>
+          <div class="flex gap-2 pt-2">
+            <button onclick="nextQuestion()"
+              class="bg-indigo-500 hover:bg-indigo-400 px-5 py-2.5 rounded-xl text-sm font-medium transition-all">
+              Sonraki Soru
+            </button>
+            <button onclick="showSummary()"
+              class="bg-gray-800 hover:bg-gray-700 px-5 py-2.5 rounded-xl text-sm font-medium transition-all text-gray-300">
+              Özet
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div id="summary-card" class="hidden fade-in bg-gray-900 border border-gray-800 rounded-2xl p-6">
+        <h3 class="text-sm font-semibold text-gray-300 mb-3">Oturum Özeti</h3>
+        <pre id="summary-text" class="text-sm text-gray-400 whitespace-pre-wrap font-mono leading-relaxed"></pre>
+        <button onclick="resetSession()"
+          class="mt-4 bg-indigo-500 hover:bg-indigo-400 px-5 py-2.5 rounded-xl text-sm font-medium transition-all">
+          Yeni Oturum
+        </button>
+      </div>
+
+      <div id="test-loading" class="hidden text-center py-8">
+        <div class="inline-flex items-center gap-2 text-gray-500 text-sm">
+          <svg class="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+          </svg>
+          Yükleniyor...
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+  // Configure marked: sanitize off (trusted LLM output), breaks on newlines
+  marked.use({ breaks: true, gfm: true });
+
+  function renderMd(text) {
+    return marked.parse(text);
+  }
+
+  let currentMode = 'teach';
+  let isStreaming = false;
+
+  // ── Mode switching ──────────────────────────────────────────────
+  function switchMode(mode) {
+    currentMode = mode;
+    document.getElementById('teach-panel').classList.toggle('hidden', mode !== 'teach');
+    document.getElementById('teach-panel').classList.toggle('flex', mode === 'teach');
+    document.getElementById('test-panel').classList.toggle('hidden', mode !== 'test');
+
+    const activeClass = ['bg-indigo-500', 'text-white'];
+    const inactiveClass = ['text-gray-400', 'hover:text-gray-200'];
+    ['teach', 'test'].forEach(m => {
+      const tab = document.getElementById(`tab-${m}`);
+      if (m === mode) {
+        tab.classList.add(...activeClass);
+        tab.classList.remove(...inactiveClass);
+      } else {
+        tab.classList.remove(...activeClass);
+        tab.classList.add(...inactiveClass);
+      }
+    });
+  }
+
+  function resetSession() {
+    const endpoint = currentMode === 'teach' ? '/teach/reset' : '/test/reset';
+    fetch(endpoint, { method: 'POST' });
+
+    if (currentMode === 'teach') {
+      document.getElementById('chat-messages').innerHTML =
+        '<div class="flex justify-center"><p class="text-gray-500 text-sm">Wiki\'nden öğren. Bir şey sor.</p></div>';
+      document.getElementById('sources-bar').classList.add('hidden');
+    } else {
+      document.getElementById('test-start').classList.remove('hidden');
+      document.getElementById('question-card').classList.add('hidden');
+      document.getElementById('summary-card').classList.add('hidden');
+      document.getElementById('topic-input').value = '';
+    }
+  }
+
+  // ── Teach mode ──────────────────────────────────────────────────
+  function appendMessage(role, content) {
+    const container = document.getElementById('chat-messages');
+    const isUser = role === 'user';
+
+    const wrap = document.createElement('div');
+    wrap.className = `flex ${isUser ? 'justify-end' : 'justify-start'} fade-in`;
+
+    const bubble = document.createElement('div');
+
+    if (isUser) {
+      bubble.className = 'max-w-xl bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed';
+      bubble.textContent = content;
+    } else {
+      bubble.className = 'md max-w-2xl bg-gray-900 border border-gray-800 text-gray-200 rounded-2xl rounded-tl-sm px-5 py-4 text-sm';
+      bubble.id = 'streaming-bubble';
+      // Show raw text while streaming; rendered after done
+      bubble.innerHTML = '<span class="text-gray-400 typing-cursor"></span>';
+    }
+
+    wrap.appendChild(bubble);
+    container.appendChild(wrap);
+    container.scrollTop = container.scrollHeight;
+    return bubble;
+  }
+
+  async function sendQuestion(e) {
+    e.preventDefault();
+    if (isStreaming) return;
+
+    const input = document.getElementById('teach-input');
+    const question = input.value.trim();
+    if (!question) return;
+
+    input.value = '';
+    isStreaming = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('sources-bar').classList.add('hidden');
+
+    appendMessage('user', question);
+    const bubble = appendMessage('assistant', '');
+
+    const res = await fetch('/teach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question })
+    });
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = JSON.parse(line.slice(6));
+
+        if (data.type === 'sources' && data.sources.length > 0) {
+          document.getElementById('sources-text').textContent = ' ' + data.sources.join(', ');
+          document.getElementById('sources-bar').classList.remove('hidden');
+        } else if (data.type === 'token') {
+          fullText += data.token;
+          // Show plain text while streaming to avoid broken markdown mid-stream
+          bubble.textContent = fullText;
+          bubble.classList.add('typing-cursor');
+          document.getElementById('chat-messages').scrollTop =
+            document.getElementById('chat-messages').scrollHeight;
+        } else if (data.type === 'done') {
+          // Render full markdown once stream is complete
+          bubble.classList.remove('typing-cursor');
+          bubble.id = '';
+          bubble.innerHTML = renderMd(fullText);
+          document.getElementById('chat-messages').scrollTop =
+            document.getElementById('chat-messages').scrollHeight;
+        }
+      }
+    }
+
+    isStreaming = false;
+    document.getElementById('send-btn').disabled = false;
+    input.focus();
+  }
+
+  // ── Test mode ───────────────────────────────────────────────────
+  async function startTest() {
+    const topic = document.getElementById('topic-input').value.trim();
+    document.getElementById('test-start').classList.add('hidden');
+    await loadQuestion(topic);
+  }
+
+  async function loadQuestion(topic = '') {
+    setTestLoading(true);
+    document.getElementById('question-card').classList.add('hidden');
+    document.getElementById('eval-card').classList.add('hidden');
+
+    const res = await fetch('/test/question', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic })
+    });
+    const data = await res.json();
+
+    document.getElementById('question-text').innerHTML = renderMd(data.question);
+    document.getElementById('q-sources').textContent = data.sources.join(', ');
+    document.getElementById('answer-input').value = '';
+    document.getElementById('answer-section').classList.remove('hidden');
+    document.getElementById('eval-card').classList.add('hidden');
+
+    setTestLoading(false);
+    document.getElementById('question-card').classList.remove('hidden');
+    document.getElementById('answer-input').focus();
+  }
+
+  async function submitAnswer() {
+    const answer = document.getElementById('answer-input').value.trim();
+    if (!answer) return;
+
+    setTestLoading(true);
+    document.getElementById('answer-section').classList.add('hidden');
+
+    const res = await fetch('/test/evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ answer })
+    });
+    const data = await res.json();
+
+    const score = data.score || 'unknown';
+    const badge = document.getElementById('score-badge');
+    const scoreMap = {
+      dogru:  { text: 'Doğru ✓',  cls: 'bg-green-500/15 text-green-400' },
+      kismi:  { text: 'Kısmi ~',  cls: 'bg-yellow-500/15 text-yellow-400' },
+      yanlis: { text: 'Yanlış ✗', cls: 'bg-red-500/15 text-red-400' },
+    };
+    const s = scoreMap[score] || { text: score, cls: 'bg-gray-500/15 text-gray-400' };
+    badge.textContent = s.text;
+    badge.className = `text-xs font-medium px-2.5 py-0.5 rounded-full ${s.cls}`;
+
+    document.getElementById('eval-text').innerHTML = renderMd(data.evaluation_text);
+
+    setTestLoading(false);
+    document.getElementById('eval-card').classList.remove('hidden');
+  }
+
+  async function skipQuestion() { await loadQuestion(); }
+  async function nextQuestion()  { await loadQuestion(); }
+
+  async function showSummary() {
+    const res = await fetch('/test/summary');
+    const data = await res.json();
+    document.getElementById('summary-text').textContent = data.summary;
+    document.getElementById('question-card').classList.add('hidden');
+    document.getElementById('summary-card').classList.remove('hidden');
+  }
+
+  function setTestLoading(show) {
+    document.getElementById('test-loading').classList.toggle('hidden', !show);
+  }
+
+  document.getElementById('teach-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById('teach-form').requestSubmit();
+    }
+  });
+</script>
+</body>
+</html>
