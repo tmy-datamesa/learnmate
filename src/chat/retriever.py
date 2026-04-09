@@ -1,121 +1,182 @@
-"""Retrieval chain — query ChromaDB and generate answers with GPT-4o.
+"""Retrieval chain with conversation memory for teach mode.
 
-Connects LangChain's ChatOpenAI to the existing ChromaDB collection.
-Retrieves relevant wiki documents and generates sourced answers.
+Uses Chroma Cloud Search API with hybrid search (dense + sparse via RRF).
+Maintains conversation history within a session.
 """
 
-from langchain_chroma import Chroma
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from chromadb import K, Knn, Rrf, Search
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
-from src.utils.config import (
-    CHAT_MODEL,
-    CHROMA_COLLECTION_NAME,
-    CHROMA_PERSIST_DIR,
-    EMBEDDING_MODEL,
-    OPENAI_API_KEY,
-)
+from src.ingest.embedder import get_collection
+from src.utils.config import CHAT_MODEL, OPENAI_API_KEY
 
-# System prompt for the teach mode — answer questions using wiki sources
+# Minimum RRF score to include a document in context.
+# RRF scores are negative (lower = better match).
+# -0.02 filters out clearly irrelevant results.
+RELEVANCE_THRESHOLD = -0.02
+
 SYSTEM_PROMPT = """\
 You are LearnMate, a personal AI tutor. You teach the user about AI/ML \
 concepts using their own Obsidian wiki as the knowledge source.
 
+You are a TEACHER, not an encyclopedia. Your job is to make the user \
+think deeper, not just hand them answers.
+
 Rules:
 - Answer in Turkish. Use technical terms in English as-is.
-- Base your answer ONLY on the provided context. If the context doesn't \
-contain enough information, say so honestly.
-- Cite which source documents you used (by filename).
-- Explain clearly, as if teaching someone who is learning AI/ML.
-- Keep answers concise but complete.
-
-Context from wiki:
-{context}
-"""
-
-
-def get_vectorstore() -> Chroma:
-    """Connect to the existing ChromaDB collection via LangChain.
-
-    Uses the same collection and embedding model as the ingest pipeline.
-    This is read-only — documents are added via the ingest pipeline.
-
-    Returns:
-        A LangChain Chroma vectorstore ready for similarity search.
-    """
-    embeddings = OpenAIEmbeddings(
-        model=EMBEDDING_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-    )
-
-    vectorstore = Chroma(
-        collection_name=CHROMA_COLLECTION_NAME,
-        persist_directory=str(CHROMA_PERSIST_DIR),
-        embedding_function=embeddings,
-    )
-
-    return vectorstore
+- Base your answer ONLY on the provided context. If no context is provided, \
+tell the user you don't have relevant information in the wiki for this question.
+- Cite which source documents you used (by filename) at the end of your answer.
+- Explain with analogies and real-world examples. Connect concepts to \
+practical scenarios the user might encounter while building AI products.
+- When multiple topics come up in a session, ACTIVELY connect them. \
+If the user asked about RAG earlier and now asks about context engineering, \
+explain how they relate.
+- At the end of EVERY answer, suggest exactly 2 follow-up questions under \
+a "Daha derine:" heading. These questions must be challenging and \
+thought-provoking — never simple definition questions. They should force \
+the user to think about edge cases, trade-offs, or apply the concept \
+to a real scenario.
+- When the user asks a follow-up question, use the conversation history \
+to understand what they're referring to."""
 
 
-def build_chain():
-    """Build a retrieval-augmented generation (RAG) chain.
+def hybrid_search(collection, query: str, n_results: int = 4) -> list[dict]:
+    """Run hybrid search combining dense (Qwen) and sparse (Splade) rankings.
 
-    Flow:
-        1. User question comes in
-        2. ChromaDB retriever finds top 4 relevant documents
-        3. Documents are formatted as context
-        4. GPT-4o generates an answer based on context + question
+    Uses Reciprocal Rank Fusion (RRF) to merge semantic similarity
+    and keyword matching results.
+
+    Args:
+        collection: Chroma Cloud collection.
+        query: User's search query.
+        n_results: Maximum number of results to return.
 
     Returns:
-        A LangChain runnable chain (invoke with {"question": "..."}).
+        List of dicts with keys: id, document, metadata, score.
     """
-    vectorstore = get_vectorstore()
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", SYSTEM_PROMPT),
-            ("human", "{question}"),
-        ]
+    # Hybrid search: dense (semantic) + sparse (keyword) via RRF
+    hybrid_rank = Rrf(
+        ranks=[
+            Knn(query=query, return_rank=True, limit=20),
+            Knn(
+                query=query,
+                key="sparse_embedding",
+                return_rank=True,
+                limit=20,
+            ),
+        ],
+        weights=[0.7, 0.3],
+        k=60,
     )
 
-    llm = ChatOpenAI(
-        model=CHAT_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-        temperature=0.3,
+    search = (
+        Search()
+        .rank(hybrid_rank)
+        .limit(n_results)
+        .select(K.DOCUMENT, K.SCORE, K.METADATA)
     )
 
-    def format_docs(docs):
-        """Format retrieved documents into a single context string.
+    results = collection.search(search)
+    rows = results.rows()[0]
+
+    docs = []
+    for row in rows:
+        docs.append(
+            {
+                "document": row["document"],
+                "metadata": row["metadata"],
+                "score": row["score"],
+            }
+        )
+
+    return docs
+
+
+def _format_docs(docs: list[dict]) -> tuple[str, list[str]]:
+    """Format retrieved documents into context string and source list.
+
+    All document types are included in context for answer generation.
+    Only documents from "sources" subfolder appear in the sources list.
+
+    Args:
+        docs: List of dicts from _hybrid_search.
+
+    Returns:
+        Tuple of (formatted context string, list of source names).
+    """
+    parts = []
+    sources = []
+    for doc in docs:
+        score = doc["score"]
+        if score > RELEVANCE_THRESHOLD:
+            continue
+        metadata = doc["metadata"]
+        source = metadata.get("filename", "unknown")
+        doc_type = metadata.get("type", "unknown")
+        subfolder = metadata.get("subfolder", "")
+        parts.append(f"[{doc_type}: {source}]\n{doc['document']}")
+        if subfolder == "sources":
+            sources.append(source)
+    return "\n\n---\n\n".join(parts), sources
+
+
+class TeachSession:
+    """A single teach-mode conversation session with memory.
+
+    Maintains chat history so follow-up questions work naturally.
+    Each question triggers a fresh hybrid search from Chroma Cloud.
+    """
+
+    def __init__(self) -> None:
+        """Initialize a new teach session."""
+        self._collection = get_collection()
+        self._llm = ChatOpenAI(
+            model=CHAT_MODEL,
+            openai_api_key=OPENAI_API_KEY,
+            temperature=0.3,
+        )
+        self._history: list[HumanMessage | AIMessage] = []
+
+    def ask(self, question: str) -> tuple[str, list[str]]:
+        """Ask a question with full conversation context.
 
         Args:
-            docs: List of LangChain Document objects.
+            question: User's question in any language.
 
         Returns:
-            Formatted string with document content and source info.
+            Tuple of (answer string, list of source document names).
         """
-        parts = []
-        for doc in docs:
-            source = doc.metadata.get("filename", "unknown")
-            doc_type = doc.metadata.get("type", "unknown")
-            parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
-        return "\n\n---\n\n".join(parts)
+        # Hybrid search: dense + sparse via RRF
+        docs = hybrid_search(self._collection, question)
+        context, sources = _format_docs(docs)
 
-    # RAG chain: retrieve → format → prompt → LLM → parse output
-    chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
+        # Build messages: system + history + context (if any) + question
+        messages = [SystemMessage(content=SYSTEM_PROMPT)]
+        messages.extend(self._history)
 
-    return chain
+        if context:
+            user_msg = f"Context from wiki:\n{context}\n\nQuestion: {question}"
+        else:
+            user_msg = f"No relevant wiki context found.\n\nQuestion: {question}"
+
+        messages.append(HumanMessage(content=user_msg))
+
+        # Generate answer
+        response = self._llm.invoke(messages)
+        answer = response.content
+
+        # Save to history (without context to keep history clean)
+        self._history.append(HumanMessage(content=question))
+        self._history.append(AIMessage(content=answer))
+
+        return answer, sources
 
 
+# Convenience function for single questions (no memory)
 def ask(question: str) -> str:
-    """Ask a question and get a wiki-sourced answer.
+    """Ask a single question without conversation memory.
 
     Args:
         question: User's question in any language.
@@ -123,5 +184,6 @@ def ask(question: str) -> str:
     Returns:
         Generated answer string with source citations.
     """
-    chain = build_chain()
-    return chain.invoke(question)
+    session = TeachSession()
+    answer, _ = session.ask(question)
+    return answer

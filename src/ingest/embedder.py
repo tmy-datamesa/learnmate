@@ -1,46 +1,94 @@
-"""Embed documents and store them in ChromaDB.
+"""Embed documents and store them in Chroma Cloud.
 
-Takes parsed wiki documents (from parser.py), generates embeddings via
-OpenAI API, and upserts them into a persistent ChromaDB collection.
-Supports incremental sync — only new/changed docs are embedded.
+Uses Chroma Cloud Qwen for dense embeddings and Splade for sparse
+embeddings. Supports incremental sync via content hashing.
 """
 
 import hashlib
 
 import chromadb
-from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+from chromadb import Schema, SparseVectorIndexConfig, VectorIndexConfig, K
+from chromadb.utils.embedding_functions import (
+    ChromaCloudQwenEmbeddingFunction,
+    ChromaCloudSpladeEmbeddingFunction,
+)
+from chromadb.utils.embedding_functions.chroma_cloud_qwen_embedding_function import (
+    ChromaCloudQwenEmbeddingModel,
+)
 
 from src.utils.config import (
+    CHROMA_API_KEY,
     CHROMA_COLLECTION_NAME,
-    CHROMA_PERSIST_DIR,
-    EMBEDDING_MODEL,
-    OPENAI_API_KEY,
+    CHROMA_DATABASE,
+    CHROMA_TENANT,
 )
 
 
-def get_collection() -> chromadb.Collection:
-    """Connect to (or create) the ChromaDB collection with OpenAI embeddings.
-
-    Uses persistent storage so vectors survive between runs.
-    The collection uses OpenAI's embedding function directly —
-    ChromaDB handles calling the API when documents are added.
+def get_client() -> chromadb.ClientAPI:
+    """Connect to Chroma Cloud.
 
     Returns:
-        A ChromaDB Collection ready for upsert/query operations.
+        A Chroma CloudClient instance.
     """
-    client = chromadb.PersistentClient(path=str(CHROMA_PERSIST_DIR))
-
-    embedding_fn = OpenAIEmbeddingFunction(
-        api_key=OPENAI_API_KEY,
-        model_name=EMBEDDING_MODEL,
+    return chromadb.CloudClient(
+        tenant=CHROMA_TENANT,
+        database=CHROMA_DATABASE,
+        api_key=CHROMA_API_KEY,
     )
 
-    collection = client.get_or_create_collection(
+
+def _build_schema() -> Schema:
+    """Build collection schema with dense (Qwen) and sparse (Splade) indexes.
+
+    Dense: semantic similarity search via Chroma Cloud Qwen embeddings.
+    Sparse: keyword matching via Chroma Cloud Splade embeddings.
+    Together they enable hybrid search with RRF.
+
+    Returns:
+        A Schema configured for hybrid search.
+    """
+    schema = Schema()
+
+    # Dense embeddings — Chroma Cloud Qwen (free, no OpenAI cost)
+    # api_key_env_var defaults to "CHROMA_API_KEY" which matches our .env
+    dense_ef = ChromaCloudQwenEmbeddingFunction(
+        model=ChromaCloudQwenEmbeddingModel.QWEN3_EMBEDDING_0p6B,
+        task=None,
+    )
+    schema.create_index(
+        config=VectorIndexConfig(
+            space="cosine",
+            embedding_function=dense_ef,
+        )
+    )
+
+    # Sparse embeddings — Chroma Cloud Splade (keyword search)
+    # api_key_env_var defaults to "CHROMA_API_KEY" which matches our .env
+    sparse_ef = ChromaCloudSpladeEmbeddingFunction()
+    schema.create_index(
+        config=SparseVectorIndexConfig(
+            source_key=K.DOCUMENT,
+            embedding_function=sparse_ef,
+        ),
+        key="sparse_embedding",
+    )
+
+    return schema
+
+
+def get_collection() -> chromadb.Collection:
+    """Get or create the wiki collection with hybrid search schema.
+
+    Returns:
+        A Chroma Cloud Collection ready for upsert/search.
+    """
+    client = get_client()
+    schema = _build_schema()
+
+    return client.get_or_create_collection(
         name=CHROMA_COLLECTION_NAME,
-        embedding_function=embedding_fn,
+        schema=schema,
     )
-
-    return collection
 
 
 def _content_hash(text: str) -> str:
@@ -56,7 +104,7 @@ def _content_hash(text: str) -> str:
 
 
 def sync_documents(documents: list[dict]) -> dict[str, int]:
-    """Incrementally sync documents to ChromaDB.
+    """Incrementally sync documents to Chroma Cloud.
 
     Compares content hashes to detect changes:
     - New documents → embed and add
@@ -81,7 +129,7 @@ def sync_documents(documents: list[dict]) -> dict[str, int]:
         metadata = {**doc["metadata"], "content_hash": doc_hash}
         incoming[doc["id"]] = {"content": doc["content"], "metadata": metadata}
 
-    # Get all existing doc IDs and their hashes from ChromaDB
+    # Get all existing doc IDs and their hashes from Chroma Cloud
     existing_ids: list[str] = []
     existing_hashes: dict[str, str] = {}
     if collection.count() > 0:
@@ -99,13 +147,11 @@ def sync_documents(documents: list[dict]) -> dict[str, int]:
         new_hash = data["metadata"]["content_hash"]
 
         if doc_id not in existing_hashes:
-            # New document
             to_upsert_ids.append(doc_id)
             to_upsert_contents.append(data["content"])
             to_upsert_metadatas.append(data["metadata"])
             stats["added"] += 1
         elif existing_hashes[doc_id] != new_hash:
-            # Content changed
             to_upsert_ids.append(doc_id)
             to_upsert_contents.append(data["content"])
             to_upsert_metadatas.append(data["metadata"])
