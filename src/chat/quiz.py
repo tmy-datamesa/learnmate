@@ -7,7 +7,8 @@ and tracks results for a session summary.
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from src.chat.retriever import get_vectorstore
+from src.chat.retriever import hybrid_search
+from src.ingest.embedder import get_collection
 from src.utils.config import CHAT_MODEL, OPENAI_API_KEY
 
 QUESTION_PROMPT = """\
@@ -79,7 +80,7 @@ class TestSession:
 
     def __init__(self) -> None:
         """Initialize a new test session."""
-        self._vectorstore = get_vectorstore()
+        self._collection = get_collection()
         self._llm = ChatOpenAI(
             model=CHAT_MODEL,
             openai_api_key=OPENAI_API_KEY,
@@ -107,21 +108,18 @@ class TestSession:
         """
         # Retrieve relevant docs for the topic
         query = topic if topic else "AI ML concepts"
-        scored_docs = self._vectorstore.similarity_search_with_relevance_scores(
-            query, k=3
-        )
+        docs = hybrid_search(self._collection, query, n_results=3)
 
         # Format context — skip entity docs (quiz focuses on concepts)
         parts = []
         sources = []
-        for doc, score in scored_docs:
-            if score < 0.30:
-                continue
-            doc_type = doc.metadata.get("type", "unknown")
+        for doc in docs:
+            metadata = doc["metadata"]
+            doc_type = metadata.get("type", "unknown")
             if doc_type == "entity":
                 continue  # Skip people/org docs — quiz is concept-focused
-            source = doc.metadata.get("filename", "unknown")
-            parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
+            source = metadata.get("filename", "unknown")
+            parts.append(f"[{doc_type}: {source}]\n{doc['document']}")
             sources.append(f"{doc_type}: {source}")
 
         context = "\n\n---\n\n".join(parts)
