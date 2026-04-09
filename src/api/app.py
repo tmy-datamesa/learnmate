@@ -5,7 +5,6 @@ Run: uvicorn src.api.app:app --reload
 """
 
 import json
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -16,21 +15,29 @@ from pydantic import BaseModel
 from src.chat.quiz import TestSession
 from src.chat.retriever import TeachSession
 
-# --- Session state (single-user personal tool) ---
+app = FastAPI(title="LearnMate")
+
+# Sessions are initialized lazily on first use so the server starts
+# instantly — Chroma Cloud connection is established on first request.
 _teach: TeachSession | None = None
 _test: TestSession | None = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Initialize sessions on startup."""
-    global _teach, _test
-    _teach = TeachSession()
-    _test = TestSession()
-    yield
+def get_teach() -> TeachSession:
+    """Return the teach session, creating it on first call."""
+    global _teach
+    if _teach is None:
+        _teach = TeachSession()
+    return _teach
 
 
-app = FastAPI(title="LearnMate", lifespan=lifespan)
+def get_test() -> TestSession:
+    """Return the test session, creating it on first call."""
+    global _test
+    if _test is None:
+        _test = TestSession()
+    return _test
+
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -56,7 +63,7 @@ class AnswerRequest(BaseModel):
 @app.post("/teach")
 async def teach(req: QuestionRequest):
     """Stream a teach-mode answer for the given question."""
-    sources, stream = _teach.ask_stream(req.question)
+    sources, stream = get_teach().ask_stream(req.question)
 
     # Send sources as first SSE event, then stream answer tokens
     async def generate():
@@ -72,7 +79,7 @@ async def teach(req: QuestionRequest):
 async def teach_reset():
     """Clear teach session history."""
     global _teach
-    _teach = TeachSession()
+    _teach = None
     return {"ok": True}
 
 
@@ -82,28 +89,28 @@ async def teach_reset():
 @app.post("/test/question")
 async def test_question(req: TopicRequest):
     """Generate a quiz question for the given topic."""
-    question, sources = _test.generate_question(req.topic)
+    question, sources = get_test().generate_question(req.topic)
     return {"question": question, "sources": sources}
 
 
 @app.post("/test/evaluate")
 async def test_evaluate(req: AnswerRequest):
     """Evaluate the user's answer to the current question."""
-    result = _test.evaluate_answer(req.answer)
+    result = get_test().evaluate_answer(req.answer)
     return result
 
 
 @app.get("/test/summary")
 async def test_summary():
     """Return the current test session summary."""
-    return {"summary": _test.get_summary()}
+    return {"summary": get_test().get_summary()}
 
 
 @app.post("/test/reset")
 async def test_reset():
     """Start a new test session."""
     global _test
-    _test = TestSession()
+    _test = None
     return {"ok": True}
 
 
