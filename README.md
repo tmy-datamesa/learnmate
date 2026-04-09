@@ -206,9 +206,3 @@ The `type` field controls how documents are used:
 Only documents from `subfolder: sources` appear in the Sources citation list.
 
 ---
-
-## What This Is Not
-
-- Not a general-purpose chatbot — it only knows what's in your wiki
-- Not multi-user — single session, personal tool
-- Not a SRS system — no spaced repetition scheduling (yet)
