@@ -35,6 +35,13 @@ Claude updates this file automatically after each decision.
 **Alternatives**: Split by heading (standard for long docs), fixed-size chunks with overlap (LangChain default).
 **Impact**: Simpler pipeline — no chunking logic needed for wiki. Raw sources will use heading-based chunking later since they're longer.
 
+### 2026-04-09 | Migrate to Chroma Cloud with hybrid search
+
+**Decision**: Replace local PersistentClient + OpenAI embeddings with Chroma Cloud using Qwen (dense) + Splade (sparse) and hybrid RRF retrieval.
+**Why**: OpenAI embedding costs add up with every ingest run. Chroma Cloud's Qwen and Splade embeddings are included in Chroma credits — no per-token cost. Hybrid search (semantic + keyword via RRF) also improves retrieval quality over cosine-only similarity.
+**Alternatives**: Keep local ChromaDB + OpenAI embeddings (cheaper if rarely re-ingested), Pinecone (more mature but paid), Weaviate (overkill for this corpus size).
+**Impact**: Requires CHROMA_API_KEY, CHROMA_TENANT, CHROMA_DATABASE in .env. Drops langchain-chroma dependency. LangChain still used for ChatOpenAI only. One-time migration via `python -m src.ingest.migrate`.
+
 ### 2026-04-08 | ChromaDB native embedding over LangChain wrapper
 
 **Decision**: Use ChromaDB's built-in `OpenAIEmbeddingFunction` instead of LangChain's embedding classes for the ingest pipeline.

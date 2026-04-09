@@ -1,26 +1,20 @@
 """Retrieval chain with conversation memory for teach mode.
 
-Connects LangChain's ChatOpenAI to the existing ChromaDB collection.
-Maintains conversation history within a session so follow-up questions
-understand prior context.
+Uses Chroma Cloud Search API with hybrid search (dense + sparse via RRF).
+Maintains conversation history within a session.
 """
 
-from langchain_chroma import Chroma
+from chromadb import K, Knn, Rrf, Search
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 
-from src.utils.config import (
-    CHAT_MODEL,
-    CHROMA_COLLECTION_NAME,
-    CHROMA_PERSIST_DIR,
-    EMBEDDING_MODEL,
-    OPENAI_API_KEY,
-)
+from src.ingest.embedder import get_collection
+from src.utils.config import CHAT_MODEL, OPENAI_API_KEY
 
-# Minimum relevance score to include a document in context.
-# Lowered from 0.35 to 0.25 — 0.35 was filtering out valid results
-# for broad queries like "AI öğrenmek için nereden başlamalıyım?"
-RELEVANCE_THRESHOLD = 0.25
+# Minimum RRF score to include a document in context.
+# RRF scores are negative (lower = better match).
+# -0.02 filters out clearly irrelevant results.
+RELEVANCE_THRESHOLD = -0.02
 
 SYSTEM_PROMPT = """\
 You are LearnMate, a personal AI tutor. You teach the user about AI/ML \
@@ -48,51 +42,81 @@ to a real scenario.
 to understand what they're referring to."""
 
 
-def get_vectorstore() -> Chroma:
-    """Connect to the existing ChromaDB collection via LangChain.
+def hybrid_search(collection, query: str, n_results: int = 4) -> list[dict]:
+    """Run hybrid search combining dense (Qwen) and sparse (Splade) rankings.
 
-    Uses the same collection and embedding model as the ingest pipeline.
-    This is read-only — documents are added via the ingest pipeline.
-
-    Returns:
-        A LangChain Chroma vectorstore ready for similarity search.
-    """
-    embeddings = OpenAIEmbeddings(
-        model=EMBEDDING_MODEL,
-        openai_api_key=OPENAI_API_KEY,
-    )
-
-    return Chroma(
-        collection_name=CHROMA_COLLECTION_NAME,
-        persist_directory=str(CHROMA_PERSIST_DIR),
-        embedding_function=embeddings,
-    )
-
-
-def _format_docs(scored_docs: list[tuple]) -> tuple[str, list[str]]:
-    """Format retrieved documents into context string and source list.
-
-    All document types (concepts, entities, sources) are included in the
-    context for answer generation. However, only documents from the
-    "sources" subfolder appear in the returned sources list — concepts
-    and entities are used as context but not cited.
+    Uses Reciprocal Rank Fusion (RRF) to merge semantic similarity
+    and keyword matching results.
 
     Args:
-        scored_docs: List of (Document, score) tuples from similarity search.
+        collection: Chroma Cloud collection.
+        query: User's search query.
+        n_results: Maximum number of results to return.
+
+    Returns:
+        List of dicts with keys: id, document, metadata, score.
+    """
+    # Hybrid search: dense (semantic) + sparse (keyword) via RRF
+    hybrid_rank = Rrf(
+        ranks=[
+            Knn(query=query, return_rank=True, limit=20),
+            Knn(
+                query=query,
+                key="sparse_embedding",
+                return_rank=True,
+                limit=20,
+            ),
+        ],
+        weights=[0.7, 0.3],
+        k=60,
+    )
+
+    search = (
+        Search()
+        .rank(hybrid_rank)
+        .limit(n_results)
+        .select(K.DOCUMENT, K.SCORE, K.METADATA)
+    )
+
+    results = collection.search(search)
+    rows = results.rows()[0]
+
+    docs = []
+    for row in rows:
+        docs.append(
+            {
+                "document": row["document"],
+                "metadata": row["metadata"],
+                "score": row["score"],
+            }
+        )
+
+    return docs
+
+
+def _format_docs(docs: list[dict]) -> tuple[str, list[str]]:
+    """Format retrieved documents into context string and source list.
+
+    All document types are included in context for answer generation.
+    Only documents from "sources" subfolder appear in the sources list.
+
+    Args:
+        docs: List of dicts from _hybrid_search.
 
     Returns:
         Tuple of (formatted context string, list of source names).
-        Context may include all doc types; sources list only has subfolder=sources.
     """
     parts = []
     sources = []
-    for doc, score in scored_docs:
-        if score < RELEVANCE_THRESHOLD:
+    for doc in docs:
+        score = doc["score"]
+        if score > RELEVANCE_THRESHOLD:
             continue
-        source = doc.metadata.get("filename", "unknown")
-        doc_type = doc.metadata.get("type", "unknown")
-        subfolder = doc.metadata.get("subfolder", "")
-        parts.append(f"[{doc_type}: {source}]\n{doc.page_content}")
+        metadata = doc["metadata"]
+        source = metadata.get("filename", "unknown")
+        doc_type = metadata.get("type", "unknown")
+        subfolder = metadata.get("subfolder", "")
+        parts.append(f"[{doc_type}: {source}]\n{doc['document']}")
         if subfolder == "sources":
             sources.append(source)
     return "\n\n---\n\n".join(parts), sources
@@ -102,13 +126,12 @@ class TeachSession:
     """A single teach-mode conversation session with memory.
 
     Maintains chat history so follow-up questions work naturally.
-    Each question triggers a fresh retrieval from ChromaDB, but the
-    LLM sees the full conversation history for context.
+    Each question triggers a fresh hybrid search from Chroma Cloud.
     """
 
     def __init__(self) -> None:
         """Initialize a new teach session."""
-        self._vectorstore = get_vectorstore()
+        self._collection = get_collection()
         self._llm = ChatOpenAI(
             model=CHAT_MODEL,
             openai_api_key=OPENAI_API_KEY,
@@ -125,11 +148,9 @@ class TeachSession:
         Returns:
             Tuple of (answer string, list of source document names).
         """
-        # Retrieve docs with relevance scores, filter by threshold
-        scored_docs = self._vectorstore.similarity_search_with_relevance_scores(
-            question, k=4
-        )
-        context, sources = _format_docs(scored_docs)
+        # Hybrid search: dense + sparse via RRF
+        docs = hybrid_search(self._collection, question)
+        context, sources = _format_docs(docs)
 
         # Build messages: system + history + context (if any) + question
         messages = [SystemMessage(content=SYSTEM_PROMPT)]

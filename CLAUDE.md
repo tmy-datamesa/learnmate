@@ -80,9 +80,13 @@ learnmate/
 
 - OpenAI API rate limits and cost — keep token usage efficient.
 - No GPU — all inference via API, all embeddings via API.
-- Knowledge source is ~33 wiki pages + ~17 raw source files (small corpus).
+- Knowledge source is ~49 wiki pages + ~17 raw source files (small corpus).
 
 ## Current Status
 
-- 2026-04-08: Repo created. Project structure set up. Ready for embedding pipeline.
-- 2026-04-08: Wiki embedding pipeline built (parser + embedder + pipeline runner). 33 wiki docs parsed successfully. Awaiting OpenAI API key to run first embedding.
+- 2026-04-08: Repo created. Project structure set up.
+- 2026-04-08: Wiki embedding pipeline (parser + embedder + incremental sync). 33 → 49 docs.
+- 2026-04-08: Teach mode (conversation memory, relevance filtering, follow-up questions).
+- 2026-04-08: Test mode (scenario-based quiz, fair evaluation, session summary).
+- 2026-04-08: Prompt rewrite based on user testing. Sources list filters by subfolder.
+- 2026-04-08: MVP build plan complete. All issues closed.
