@@ -13,13 +13,14 @@ Claude updates this file automatically after each decision.
 **Why**: Fastest path to a working RAG pipeline. Learning the retrieval chain matters more than building a frontend right now.
 **Alternatives**: Streamlit (easy but adds dependency), Gradio (same), FastAPI + Next.js (too much for MVP).
 **Impact**: No frontend code needed. Focus stays on ingest pipeline + LangChain conversation chain.
+**Update (2026-04-09)**: Web UI added post-MVP. See "FastAPI + vanilla HTML for web UI" decision below.
 
-### 2026-04-08 | LangChain + ChromaDB over raw OpenAI calls
+### 2026-04-08 | LangChain for chat, ChromaDB for storage
 
-**Decision**: Use LangChain for retrieval chain and ChromaDB for local vector storage.
+**Decision**: Use LangChain for the chat/retrieval layer and ChromaDB for vector storage.
 **Why**: Learning LangChain is a goal. ChromaDB already familiar. Local persistent storage means no external DB setup.
 **Alternatives**: Raw OpenAI API + manual embedding management (simpler but no learning value), LlamaIndex (less familiar), Pinecone (cloud dependency, overkill for personal use).
-**Impact**: Adds LangChain as core dependency. Project doubles as a LangChain learning exercise.
+**Impact**: LangChain used for ChatOpenAI + message history only — LangGraph was never needed and not used. ChromaDB replaced with Chroma Cloud on 2026-04-09 (see migration decision). LangChain stays for chat layer.
 
 ### 2026-04-08 | Two-branch git strategy (develop / main)
 
@@ -48,3 +49,11 @@ Claude updates this file automatically after each decision.
 **Why**: Ingest is just embed + store. LangChain's VectorStore abstraction adds complexity without benefit here. LangChain will be used in the chat/retrieval module where its chain/graph features actually matter.
 **Alternatives**: LangChain Chroma integration (langchain-chroma) for both ingest and retrieval.
 **Impact**: Fewer dependencies at ingest time. Clean separation: ingest uses ChromaDB directly, chat uses LangChain.
+**Superseded (2026-04-09)**: OpenAI embeddings dropped entirely after Chroma Cloud migration. Ingest now uses Chroma Cloud's Qwen + Splade — no embedding function passed manually.
+
+### 2026-04-09 | FastAPI + vanilla HTML for web UI
+
+**Decision**: Serve the web UI as a single HTML file from FastAPI's static directory, using Tailwind CDN and vanilla JS.
+**Why**: Zero build step. SSE streaming works natively with vanilla JS `fetch`. Tailwind CDN handles styling without a bundler. For a personal single-user tool, no framework overhead is needed.
+**Alternatives**: Next.js (overkill, build step required), Streamlit (opinionated layout, hard to customize), Gradio (same), React + Vite (adds complexity for one page).
+**Impact**: `src/api/static/index.html` is self-contained. FastAPI serves both the API and static files. Markdown rendered client-side via marked.js CDN on stream completion.
