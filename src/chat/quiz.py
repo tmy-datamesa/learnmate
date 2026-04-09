@@ -122,6 +122,23 @@ class TestSession:
             parts.append(f"[{doc_type}: {source}]\n{doc['document']}")
             sources.append(f"{doc_type}: {source}")
 
+        # If all retrieved docs were entities, retry with a broader query and
+        # more results to find at least one concept or source doc.
+        if not parts:
+            docs = hybrid_search(self._collection, "AI ML concepts", n_results=6)
+            for doc in docs:
+                metadata = doc["metadata"]
+                doc_type = metadata.get("type", "unknown")
+                if doc_type == "entity":
+                    continue
+                source = metadata.get("filename", "unknown")
+                parts.append(f"[{doc_type}: {source}]\n{doc['document']}")
+                sources.append(f"{doc_type}: {source}")
+
+        # If still no concept docs found, return early — caller can skip.
+        if not parts:
+            return "No concept documents found. Please try a different topic.", []
+
         context = "\n\n---\n\n".join(parts)
 
         # Generate question
@@ -144,8 +161,9 @@ class TestSession:
             user_answer: The user's answer to the current question.
 
         Returns:
-            Dict with keys: question, answer, score, evaluation,
-            correct_answer, sources.
+            Dict with keys: question, answer, score, evaluation_text, sources.
+            evaluation_text contains the full LLM response including score
+            label, feedback, and correct answer (all as formatted text).
         """
         messages = [
             SystemMessage(content=EVALUATE_PROMPT),

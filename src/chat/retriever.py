@@ -11,10 +11,15 @@ from langchain_openai import ChatOpenAI
 from src.ingest.embedder import get_collection
 from src.utils.config import CHAT_MODEL, OPENAI_API_KEY
 
-# Minimum RRF score to include a document in context.
-# RRF scores are negative (lower = better match).
-# -0.02 filters out clearly irrelevant results.
-RELEVANCE_THRESHOLD = -0.02
+# Maximum RRF score to include a document in context.
+# RRF scores are negative — more negative = better match (higher rank).
+# A score near 0 means the document barely ranked. -0.010 filters those out.
+RELEVANCE_THRESHOLD = -0.010
+
+# Maximum number of Q&A turns to keep in session history.
+# Each turn = 2 messages (HumanMessage + AIMessage).
+# Prevents unbounded context growth across long sessions.
+MAX_HISTORY_TURNS = 20
 
 SYSTEM_PROMPT = """\
 You are LearnMate, a personal AI tutor. You teach the user about AI/ML \
@@ -170,6 +175,11 @@ class TeachSession:
         # Save to history (without context to keep history clean)
         self._history.append(HumanMessage(content=question))
         self._history.append(AIMessage(content=answer))
+
+        # Trim oldest turns if history exceeds the limit
+        max_messages = MAX_HISTORY_TURNS * 2
+        if len(self._history) > max_messages:
+            self._history = self._history[-max_messages:]
 
         return answer, sources
 
