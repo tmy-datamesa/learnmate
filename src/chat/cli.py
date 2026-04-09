@@ -46,6 +46,7 @@ def run_test_mode() -> None:
     print("Commands: q (quit), skip (next question), summary (show results)\n")
 
     session = TestSession()
+    summary_shown = False
 
     topic = input("Topic (leave empty for random): ").strip()
 
@@ -59,7 +60,9 @@ def run_test_mode() -> None:
         # Get user's answer
         answer = input("Your answer: ").strip()
 
-        if not answer or answer.lower() in ("q", "exit", "quit"):
+        if not answer:
+            continue
+        if answer.lower() in ("q", "exit", "quit"):
             break
         if answer.lower() == "skip":
             print("Skipped.\n")
@@ -80,10 +83,11 @@ def run_test_mode() -> None:
             break
         if cont.lower() == "summary":
             print(session.get_summary())
+            summary_shown = True
             break
 
-    # Always show summary at the end
-    print(session.get_summary())
+    if not summary_shown:
+        print(session.get_summary())
 
 
 def main() -> None:
