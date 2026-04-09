@@ -12,12 +12,15 @@ from chromadb.utils.embedding_functions import (
     ChromaCloudQwenEmbeddingFunction,
     ChromaCloudSpladeEmbeddingFunction,
 )
+from chromadb.utils.embedding_functions.chroma_cloud_qwen_embedding_function import (
+    ChromaCloudQwenEmbeddingModel,
+)
 
 from src.utils.config import (
-    CHROMA_API_KEY,
     CHROMA_COLLECTION_NAME,
     CHROMA_DATABASE,
     CHROMA_TENANT,
+    CHROMA_API_KEY,
 )
 
 
@@ -47,7 +50,11 @@ def _build_schema() -> Schema:
     schema = Schema()
 
     # Dense embeddings — Chroma Cloud Qwen (free, no OpenAI cost)
-    dense_ef = ChromaCloudQwenEmbeddingFunction(api_key=CHROMA_API_KEY)
+    # api_key_env_var defaults to "CHROMA_API_KEY" which matches our .env
+    dense_ef = ChromaCloudQwenEmbeddingFunction(
+        model=ChromaCloudQwenEmbeddingModel.QWEN3_EMBEDDING_0p6B,
+        task=None,
+    )
     schema.create_index(
         config=VectorIndexConfig(
             space="cosine",
@@ -56,7 +63,8 @@ def _build_schema() -> Schema:
     )
 
     # Sparse embeddings — Chroma Cloud Splade (keyword search)
-    sparse_ef = ChromaCloudSpladeEmbeddingFunction(api_key=CHROMA_API_KEY)
+    # api_key_env_var defaults to "CHROMA_API_KEY" which matches our .env
+    sparse_ef = ChromaCloudSpladeEmbeddingFunction()
     schema.create_index(
         config=SparseVectorIndexConfig(
             source_key=K.DOCUMENT,
