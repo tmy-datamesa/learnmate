@@ -50,10 +50,10 @@
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
   </style>
 </head>
-<body class="dark bg-gray-950 text-gray-100 min-h-screen flex flex-col antialiased">
+<body class="dark bg-gray-950 text-gray-100 h-screen flex flex-col overflow-hidden antialiased">
 
   <!-- Header -->
-  <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between shrink-0">
+  <header class="border-b border-gray-800 px-6 py-4 flex items-center justify-between shrink-0 sticky top-0 z-10 bg-gray-950">
     <div class="flex items-center gap-3">
       <div class="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center text-white font-bold text-sm">L</div>
       <span class="font-semibold text-gray-100">LearnMate</span>
@@ -109,7 +109,7 @@
   </div>
 
   <!-- TEST MODE -->
-  <div id="test-panel" class="hidden flex-1 overflow-y-auto px-4 py-8">
+  <div id="test-panel" class="hidden flex-1 min-h-0 overflow-y-auto px-4 py-8">
     <div class="max-w-2xl mx-auto space-y-6">
 
       <div id="test-start" class="space-y-4">
